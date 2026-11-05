@@ -1,0 +1,41 @@
+# SIRA — ambiente de TESTE LOCAL completo: banco fictício com o esquema real do PEC + cérebro + conector.
+# Não toca em nenhum e-SUS (produção, homologação ou local). Subir: ./subir_teste.sh
+name: sira-teste
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: "teste_postgres"
+      POSTGRES_DB: esus
+      SIRA_SAL: "sal-de-teste"
+      SIRA_RO_SENHA: "teste_ro_senha"
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ../banco_real:/sira/banco_real:ro
+      - dbdata:/var/lib/postgresql/data
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres -d esus"], interval: 3s, retries: 60 }
+    restart: unless-stopped        # sem "ports": só os outros containers enxergam o banco
+
+  cerebro:
+    build: { context: .., dockerfile: Dockerfile }   # imagem com o catálogo dentro: habilita a tela "Conexão com o banco de dados"
+    environment:
+      SIRA_SEGREDO: "${SIRA_SEGREDO:?rode ./subir_teste.sh}"
+      SIRA_MODO_DIRETO: "1"
+      SIRA_HTTP_INTERNO: "1"
+      PORT: "3200"
+    volumes: [ "cerebrodata:/dados" ]
+    ports: [ "${PORTA:-3210}:3200" ]
+    restart: unless-stopped
+
+  conector:
+    build: ../conector
+    profiles: [ "conector" ]       # só sobe depois que o token existe (veja subir_teste.sh)
+    environment:
+      SIRA_DB_URL: "postgres://sira_ro:teste_ro_senha@db:5432/esus"
+      SIRA_CEREBRO_URL: "ws://cerebro:3200/conector"
+      SIRA_TOKEN: "${SIRA_TOKEN:?rode ./subir_teste.sh}"
+    volumes: [ "conectorlogs:/logs" ]
+    depends_on: { db: { condition: service_healthy }, cerebro: { condition: service_started } }
+    restart: unless-stopped
+
+volumes: { dbdata: {}, cerebrodata: {}, conectorlogs: {} }

@@ -1,0 +1,15 @@
+# SIRA — MODO DIRETO (dentro da rede da prefeitura). Um único container; a conexão com o banco é cadastrada na tela Configurações.
+name: sira-direto
+services:
+  sira:
+    build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    extra_hosts: [ "host.docker.internal:host-gateway" ]   # permite apontar para um PostgreSQL publicado nesta mesma máquina (teste local)
+    ports: [ "${SIRA_PORTA:-3200}:3200" ]
+    environment:
+      SIRA_SEGREDO: "${SIRA_SEGREDO:?rode ./instalar.sh}"
+      SIRA_HTTP_INTERNO: "${SIRA_HTTP_INTERNO:-1}"   # 1 = acesso por http dentro da rede; 0 = atrás de um proxy HTTPS da prefeitura
+      PORT: "3200"
+    volumes: [ "dados:/dados" ]
+    healthcheck: { test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3200/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"], interval: 30s, timeout: 5s, retries: 3 }
+volumes: { dados: {} }

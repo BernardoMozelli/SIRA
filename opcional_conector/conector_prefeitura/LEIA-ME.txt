@@ -1,0 +1,7 @@
+SIRA — conector local (BeMo Sistemas). Desenvolvido por Bernardo Mozelli de Medeiros.
+Instalar:        ./instalar.sh
+Ver andamento:   docker compose logs -f conector
+Parar / iniciar: docker compose stop / docker compose start
+Atualizar:       substitua a pasta conector/ pela nova e rode ./instalar.sh
+Desinstalar:     docker compose down   (o banco do e-SUS não é alterado pelo conector)
+O conector só faz conexão de saída até o cérebro e só lê o schema "mcp" (views mascaradas) do banco.

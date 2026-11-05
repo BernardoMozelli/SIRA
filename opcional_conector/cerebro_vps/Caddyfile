@@ -1,0 +1,11 @@
+# HTTPS automático (Let's Encrypt). O domínio precisa apontar (registro A) para o IP desta VPS e as portas 80/443 estarem liberadas.
+# O Caddy também repassa o WebSocket do conector (/conector) e informa o IP real do cliente ao cérebro.
+{$SIRA_DOMINIO} {
+  encode gzip
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+  }
+  reverse_proxy cerebro:3200
+}

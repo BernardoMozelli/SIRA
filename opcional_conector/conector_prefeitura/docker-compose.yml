@@ -1,0 +1,11 @@
+# SIRA — conector local. Só faz conexão de SAÍDA até o cérebro; não abre nenhuma porta.
+services:
+  conector:
+    build: ./conector
+    container_name: sira_conector
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SIRA_TIMEOUT_MS: "${SIRA_TIMEOUT_MS:-30000}"
+    volumes: [ "./logs:/logs" ]
+    extra_hosts: [ "host.docker.internal:host-gateway" ]   # permite apontar o banco para o próprio servidor (host.docker.internal)

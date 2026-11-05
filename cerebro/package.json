@@ -1,0 +1,10 @@
+{
+  "name": "sira-cerebro",
+  "version": "0.1.0",
+  "description": "SIRA — cérebro (roda na VPS da BeMo). Chat web, busca da pergunta no catálogo e orquestração do conector. Não recebe dado de paciente.",
+  "main": "src/index.js",
+  "scripts": { "start": "node src/index.js", "test": "node src/teste_unitario.js && node src/teste_admin.js && node src/teste_historico.js && node ../conector/src/teste_validador.js" },
+  "dependencies": { "ws": "^8.16.0" },
+  "license": "UNLICENSED",
+  "author": "Bernardo Mozelli de Medeiros — BeMo Sistemas"
+}

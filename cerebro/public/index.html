@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SIRA — Sistema Inteligente de Respostas e Análises</title>
+<link rel="icon" href="/logo.svg">
+<link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+<main id="tela-login" class="login" hidden>
+  <form id="form-login" class="cartao-login" autocomplete="on">
+    <div class="login-marca">
+      <img src="/logo.svg" alt="" width="72" height="72">
+      <h1>SIRA</h1>
+      <div class="sub">Sistema Inteligente de Respostas e Análises</div>
+    </div>
+    <label for="login">Usuário</label><input id="login" name="username" autocomplete="username" autofocus required>
+    <label for="senha">Senha</label>
+    <div class="campo-senha"><input id="senha" name="password" type="password" autocomplete="current-password" required><button type="button" class="olho" aria-label="Mostrar senha" title="Mostrar senha"><svg class="i-ver" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="i-ocultar" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.9 10.9 0 0112 20C5 20 1 12 1 12a19.8 19.8 0 015.1-5.9M9.9 4.2A10.6 10.6 0 0112 4c7 0 11 8 11 8a19.7 19.7 0 01-3.2 4.2M14.1 14.1a3 3 0 11-4.2-4.2M1 1l22 22"/></svg></button></div>
+    <p id="erro-login" class="erro" role="alert" hidden></p>
+    <button type="submit" class="btn">Entrar</button>
+    <p class="rodape-mini">Desenvolvido por BeMo Sistemas</p>
+  </form>
+</main>
+
+<div id="tela-app" class="app" hidden>
+  <aside id="lateral" class="lateral" aria-label="Pesquisas e menu">
+    <div class="lat-topo">
+      <button class="marca" id="m-logo" type="button" title="Ir para o Início" aria-label="Ir para o Início"><img src="/logo.svg" alt="" width="32" height="32"><strong>SIRA</strong></button>
+      <button id="lat-fechar" class="icone-btn so-mobile" type="button" aria-label="Fechar menu"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <button id="nova-pesquisa" class="nova" type="button"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Nova pesquisa</button>
+    <div class="busca-hist"><input id="busca-hist" type="search" placeholder="Buscar nas suas pesquisas" autocomplete="off" aria-label="Buscar nas suas pesquisas"></div>
+    <nav id="historico" class="hist" aria-label="Suas pesquisas"></nav>
+    <div class="lat-base">
+      <nav class="menu" id="menu" aria-label="Menu principal">
+        <button class="mi ativo" id="m-inicio" type="button">Início</button>
+        <button class="mi" id="m-perguntar" type="button" hidden>Perguntar</button>
+        <button class="mi" id="m-paineis" type="button" hidden>Meus painéis</button>
+        <div class="grupo" id="g-admin" hidden>
+          <button class="mi" id="m-admin" type="button" aria-haspopup="true" aria-expanded="false">Administração <span class="seta">▴</span></button>
+          <div class="drop acima" id="d-admin" hidden>
+            <button id="btn-usuarios" type="button" hidden>Usuários e permissões</button>
+            <button id="btn-config" type="button" hidden>Configurações</button>
+            <button id="btn-auditoria" type="button" hidden>Auditoria de perguntas</button>
+            <button id="btn-ia" type="button" hidden>Inteligência artificial</button>
+          </div>
+        </div>
+      </nav>
+      <div class="grupo usuario-grupo">
+        <button class="mi usuario-btn" id="m-usuario" type="button" aria-haspopup="true" aria-expanded="false"><span class="avatar" id="avatar"></span><span class="usuario-nome"><span id="usuario" class="usuario"></span><small id="cliente" class="cliente"></small></span> <span class="seta">▴</span></button>
+        <div class="drop acima" id="d-usuario" hidden>
+          <div class="drop-info" id="usuario-info"></div>
+          <button id="btn-senha" type="button">Minha senha</button>
+          <button id="btn-limpar-hist" type="button">Apagar meu histórico</button>
+          <button id="btn-sair" type="button">Sair</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <div id="lat-sombra" class="lat-sombra" hidden></div>
+
+  <div class="principal">
+  <header class="topo">
+    <button id="lat-abrir" class="icone-btn so-mobile" type="button" aria-label="Abrir menu"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+    <h1 id="titulo-conversa" class="titulo-conversa">Nova pesquisa</h1>
+    <span id="status" class="status" title="Conexão com o servidor da prefeitura"><i></i><span id="status-txt">…</span></span>
+  </header>
+
+  <section id="conversa" class="conversa" aria-live="polite">
+    <div id="boas-vindas" class="boas-vindas">
+      <h2>O que você quer saber hoje?</h2>
+      <p>Escreva a pergunta do seu jeito. As respostas vêm direto dos dados da prefeitura, sem expor nenhum paciente.</p>
+      <div id="chips" class="chips"></div>
+    </div>
+  </section>
+
+  <section id="painel-inicio" class="auditoria inicio" hidden aria-label="Início">
+    <h2 id="inicio-saudacao" class="inicio-titulo"></h2>
+    <p class="inicio-sub">SIRA — Sistema Inteligente de Respostas e Análises</p>
+    <div id="inicio-cartoes" class="cartoes"></div>
+    <p class="inicio-rodape">Desenvolvido por BeMo Sistemas</p>
+  </section>
+
+  <section id="painel-paineis" class="auditoria larga" hidden aria-label="Meus painéis">
+    <div class="auditoria-topo"><h2>Meus painéis</h2><div class="topo-acoes"><button id="paineis-atualizar" class="btn-sm claro" type="button">Atualizar agora</button><button id="paineis-pdf" class="btn-sm" type="button">Baixar PDF</button></div></div>
+    <p class="inicio-sub" id="paineis-sub">Números e gráficos que você fixou. Cada item é recalculado com os dados atuais toda vez que você abre esta tela. Só você vê o seu painel.</p>
+    <div id="paineis-grade" class="paineis-grade"></div>
+  </section>
+
+  <section id="painel-auditoria" class="auditoria" hidden>
+    <div class="auditoria-topo"><h2>Auditoria de perguntas</h2><button id="fechar-auditoria" class="link">Fechar</button></div>
+    <div id="auditoria-lista" class="auditoria-lista"></div>
+  </section>
+
+  <section id="painel-usuarios" class="auditoria larga" hidden>
+    <div class="auditoria-topo"><h2>Usuários e permissões</h2><button id="fechar-usuarios" class="link">Fechar</button></div>
+    <div id="usuarios-corpo" class="ia-corpo"></div>
+  </section>
+
+  <section id="painel-config" class="auditoria larga" hidden>
+    <div class="auditoria-topo"><h2>Configurações</h2><button id="fechar-config" class="link">Fechar</button></div>
+    <div id="config-corpo" class="ia-corpo"></div>
+  </section>
+
+  <section id="painel-ia" class="auditoria" hidden>
+    <div class="auditoria-topo"><h2>Inteligência artificial</h2><button id="fechar-ia" class="link">Fechar</button></div>
+    <div id="ia-corpo" class="ia-corpo"></div>
+  </section>
+
+  <form id="form-pergunta" class="entrada">
+    <input id="pergunta" maxlength="300" placeholder="Ex.: quantas gestantes estão sem pré-natal há mais de 60 dias?" autocomplete="off" required>
+    <button class="btn" type="submit" id="btn-enviar">Perguntar</button>
+  </form>
+  <footer class="rodape">Os números são agregados; valores menores que 5 são ocultados. Desenvolvido por BeMo Sistemas.</footer>
+  </div>
+</div>
+<script src="/vendor/sweetalert2.all.min.js"></script>
+<script src="/vendor/chart.umd.js"></script>
+<script src="/vendor/jspdf.umd.min.js"></script>
+<script src="/vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="/vendor/jszip.min.js"></script>
+<script src="/saidas.js"></script>
+<script src="/admin.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

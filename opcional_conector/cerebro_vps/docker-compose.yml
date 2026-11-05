@@ -1,0 +1,19 @@
+# SIRA — CÉREBRO em produção (VPS da BeMo). Só o Caddy publica portas (80/443, com HTTPS automático); o cérebro fica interno.
+name: sira-cerebro
+services:
+  cerebro:
+    build: ../../cerebro
+    restart: unless-stopped
+    environment:
+      SIRA_SEGREDO: "${SIRA_SEGREDO:?rode ./instalar_cerebro.sh}"
+      PORT: "3200"
+    volumes: [ "dados:/dados" ]
+    healthcheck: { test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3200/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"], interval: 30s, timeout: 5s, retries: 3 }
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: [ "80:80", "443:443" ]
+    environment: { SIRA_DOMINIO: "${SIRA_DOMINIO:?rode ./instalar_cerebro.sh}" }
+    volumes: [ "./Caddyfile:/etc/caddy/Caddyfile:ro", "caddydata:/data", "caddyconfig:/config" ]
+    depends_on: [ cerebro ]
+volumes: { dados: {}, caddydata: {}, caddyconfig: {} }
