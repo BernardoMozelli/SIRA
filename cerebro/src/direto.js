@@ -120,7 +120,7 @@ async function ligar(slug, cfg) {
   const diag = await ex.diagnostico(); const ents = await ex.entidades(); // falha aqui = não liga
   const ativas = catalogo.manifesto().filter((m) => ex.habilitada(m.id));
   const reg = { exec: ex, modo, desativadas: diag.desabilitadas, ultimoErro: null, timer: null };
-  const entrada = () => ({ manifesto: ativas, indice: texto.construirIndice(ativas), versaoCatalogo: catalogo.VERSAO_CATALOGO, entidades: ents, executar: (p, par) => ex.executar(p, par), executarLivre: (sql) => ex.executarLivre(sql), listarEntidades: () => ex.entidades(), semListas: diag.desabilitadas.some((d) => d.id.startsWith("lista_")) });
+  const entrada = () => ({ manifesto: ativas, indice: texto.construirIndice(ativas), versaoCatalogo: catalogo.VERSAO_CATALOGO, entidades: ents, executar: (p, par, cid) => ex.executar(p, par, cid), executarLivre: (sql, cid) => ex.executarLivre(sql, cid), cancelar: (cid) => ex.cancelar(cid), listarEntidades: () => ex.entidades(), semListas: diag.desabilitadas.some((d) => d.id.startsWith("lista_")) });
   hub.registrarDireto(slug, entrada());
   // vigia: se o banco cair, o SIRA mostra "offline" e volta sozinho quando ele voltar
   reg.timer = setInterval(async () => {

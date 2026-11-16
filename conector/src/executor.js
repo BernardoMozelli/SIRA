@@ -1,4 +1,6 @@
 const pg = require("pg");
+// Tempo máximo de uma consulta no banco (segundos), ajustável por SIRA_CONSULTA_S. Padrão 120 s; listas 1,5x. O e-SUS real é lento com cache frio.
+const BASE_MS = Math.min(240, Math.max(10, Number(process.env.SIRA_CONSULTA_S) || 120)) * 1000;
 const { Pool } = pg;
 const { perguntas } = require("./catalogo");
 const { validarParametros } = require("./validar");
@@ -19,18 +21,30 @@ function criarExecutor(dbUrl, opcoes = {}) {
   const pool = new Pool({ connectionString: dbUrl, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 8000, application_name: "sira", types: { getTypeParser: (oid, f) => (oid === 1082 ? (v) => v : pg.types.getTypeParser(oid, f)) } }); // date como texto AAAA-MM-DD (sem fuso)
   pool.on("error", (e) => console.error("[pool]", e.message));
 
-  async function consultar(sql, valores, tetoMs) {
+  const emCurso = new Map(), canceladas = new Set(); // id do pedido -> pid no banco (para o botão Parar)
+  async function cancelar(cid) {
+    if (!cid) return; canceladas.add(cid); setTimeout(() => canceladas.delete(cid), 60000).unref();
+    const pid = emCurso.get(cid); if (pid) { try { await pool.query("SELECT pg_cancel_backend($1)", [pid]); } catch {} }
+  }
+  async function consultar(sql, valores, tetoMs, cid) {
     const cli = await pool.connect();
+    const teto = tetoMs ? Math.min(tetoMs, 300000) : Math.min(300000, Math.max(2000, Number(process.env.SIRA_TIMEOUT_MS) || BASE_MS));
     try {
+      if (cid) { if (canceladas.has(cid)) throw Object.assign(new Error("Consulta interrompida."), { cancelada: true }); emCurso.set(cid, cli.processID); }
       await cli.query("BEGIN READ ONLY");
-      await cli.query(`SET LOCAL statement_timeout = '${tetoMs ? Math.min(tetoMs, 120000) : Math.min(120000, Math.max(2000, Number(process.env.SIRA_TIMEOUT_MS) || 30000))}'`);
+      await cli.query(`SET LOCAL statement_timeout = '${teto}'`);
+      // O PostgreSQL estima ~200 linhas para a visão de equipes (DISTINCT ON) e escolhe "nested loop", que relê a visão inteira para cada cidadão (listas passavam de 3 min). Sem nested loop ele usa hash join (0,6 s). SIRA_NESTLOOP=1 desfaz.
+      if (process.env.SIRA_NESTLOOP !== "1") await cli.query("SET LOCAL enable_nestloop = off");
+      await cli.query("SET LOCAL max_parallel_workers_per_gather = 0"); // sem consulta paralela: ela usa /dev/shm, que no Docker é de só 64 MB (erro \"could not resize shared memory segment\")
       const r = await cli.query(sql, valores);
       await cli.query("ROLLBACK");
       return r;
     } catch (e) {
       try { await cli.query("ROLLBACK"); } catch {}
+      if (e.cancelada || /user request/i.test(e.message)) throw Object.assign(new Error("Consulta interrompida."), { cancelada: true });
+      if (/statement timeout|canceling statement/i.test(e.message)) { const t = new Error(`A consulta passou de ${Math.round(teto / 1000)} s no banco e foi interrompida. Tente um período menor, ou uma unidade ou equipe específica.`); t.tempoEsgotado = true; throw t; }
       throw e;
-    } finally { cli.release(); }
+    } finally { if (cid) emCurso.delete(cid); cli.release(); }
   }
 
   let entCache = null;
@@ -70,20 +84,20 @@ function criarExecutor(dbUrl, opcoes = {}) {
     return Number.isInteger(v) && v > 0 && v < MIN_GRUPO ? { suprimido: true, faixa: `menos de ${MIN_GRUPO}` } : v;
   }
 
-  async function executar(idPergunta, paramsBrutos) {
+  async function executar(idPergunta, paramsBrutos, cid) {
     const q = perguntas.find((x) => x.id === idPergunta);
     if (!q) throw new Error("Pergunta não existe no catálogo");
     if (!habilitada(q.id)) throw new Error("Esta pergunta está desativada: " + desabilitadas.get(q.id) + ".");
     const ents = await entidades();
     const params = validarParametros(q, paramsBrutos, ents);
     if (q.resultado === "lista") { // dados pessoais: sem cache, sem supressão (a permissão e o motivo são exigidos pelo cérebro)
-      const max = q.maxLinhas || 5000, r = await consultar(sqlFinal(q.sql) + ` LIMIT ${max + 1}`, q.ordem(params), 90000); // listas nominais varrem o cadastro inteiro: teto maior (90 s)
+      const max = q.maxLinhas || 5000, r = await consultar(sqlFinal(q.sql) + ` LIMIT ${max + 1}`, q.ordem(params), Math.round(BASE_MS * 1.5), cid); // listas nominais varrem o cadastro inteiro: teto maior (1,5x)
       const linhas = r.rows.slice(0, max).map((l) => q.colunas.map((c) => l[c.chave] ?? ""));
       return { params, resultado: { tipo: "lista", colunas: q.colunas, linhas, truncado: r.rows.length > max, maximo: max }, entidades: ents };
     }
     const chave = q.id + "|" + JSON.stringify(q.ordem(params)), hit = cache.get(chave);
     if (CACHE_S > 0 && hit && Date.now() - hit.em < CACHE_S * 1000) return { ...hit.v, cacheSegundos: Math.round((Date.now() - hit.em) / 1000) };
-    const r = await consultar(sqlFinal(q.sql), q.ordem(params));
+    const r = await consultar(sqlFinal(q.sql), q.ordem(params), undefined, cid);
     let resultado;
     if (q.resultado === "valor") {
       const total = r.rows[0]?.total ?? 0;
@@ -103,7 +117,7 @@ function criarExecutor(dbUrl, opcoes = {}) {
 
   // Consulta LIVRE (escrita pela IA): passa pelo validador, roda só sobre as visões do SIRA, com limite de linhas e supressão de grupos pequenos.
   // Exige coluna "total" (contagem): linhas com total entre 1 e 4 saem sem números. Nunca devolve linha de cidadão.
-  async function executarLivre(sqlBruto) {
+  async function executarLivre(sqlBruto, cid) {
     const { sql } = validarSqlLivre(sqlBruto);
     if (modo === "embutido") {
       const cols = emb.colunasDe(sql.replace(/\bmcp\.(v_\w+)/g, "mcp.$1")); const falta = [];
@@ -112,11 +126,11 @@ function criarExecutor(dbUrl, opcoes = {}) {
     } else if (viewsOk) {
       const f = emb.viewsDe(sql).filter((v) => !viewsOk.has(v)); if (f.length) throw new Error("Visão não disponível neste banco: mcp." + f.join(", mcp."));
     }
-    // consultas livres têm teto menor (15 s) e no máximo 2 ao mesmo tempo: uma consulta mal feita não pode travar o sistema
+    // consultas livres têm o teto padrão e no máximo 2 ao mesmo tempo: uma consulta mal feita não pode travar o sistema
     if (livresAtivas >= 2) throw new Error("Há consultas livres em andamento. Tente de novo em instantes.");
     const MAX = 200; let r; livresAtivas++;
-    try { r = await consultar(`SELECT * FROM (${sqlFinal(sql)}) AS _q LIMIT ${MAX + 1}`, [], 15000); }
-    catch (e) { if (/statement timeout|canceling statement/i.test(e.message)) throw new Error("A consulta demorou demais (mais de 15 s). Peça algo mais específico (um período menor, uma equipe)."); throw e; }
+    try { r = await consultar(`SELECT * FROM (${sqlFinal(sql)}) AS _q LIMIT ${MAX + 1}`, [], BASE_MS, cid); }
+    catch (e) { if (/statement timeout|canceling statement/i.test(e.message)) throw new Error("A consulta demorou demais (mais de ${Math.round(BASE_MS / 1000)} s). Peça algo mais específico (um período menor, uma equipe)."); throw e; }
     finally { livresAtivas--; }
     const campos = r.fields.map((f) => f.name);
     if (!campos.includes("total")) throw new Error('a consulta precisa devolver a coluna "total" (contagem)');
@@ -133,7 +147,7 @@ function criarExecutor(dbUrl, opcoes = {}) {
     return { colunas: campos, linhas, truncado: r.rows.length > MAX, suprimidas, maximo: MAX, sqlExecutado: sql };
   }
 
-  return { executar, executarLivre, entidades, diagnostico, habilitada, modo, fechar: () => pool.end() };
+  return { _consultar: consultar, executar, executarLivre, cancelar, entidades, diagnostico, habilitada, modo, fechar: () => pool.end() };
 }
 
 module.exports = { criarExecutor, MIN_GRUPO };

@@ -1,8 +1,10 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt !== undefined) e.textContent = txt; return e; };
-  const api = async (url, corpo, metodo) => {
-    const r = await fetch(url, corpo === undefined && !metodo ? { credentials: "same-origin" } : { method: metodo || "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: corpo === undefined ? undefined : JSON.stringify(corpo) });
+  const api = async (url, corpo, metodo, sinal) => {
+    let r;
+    try { r = await fetch(url, corpo === undefined && !metodo ? { credentials: "same-origin", signal: sinal } : { method: metodo || "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: corpo === undefined ? undefined : JSON.stringify(corpo), signal: sinal }); }
+    catch (e) { return { status: 0, interrompida: e.name === "AbortError" }; }
     let j = {}; try { j = await r.json(); } catch {}
     return { status: r.status, ...j };
   };
@@ -62,7 +64,7 @@
   }
 
   function cartaoResposta(r, perguntaTexto) {
-    const c = el("article", "resp" + (r.ok ? "" : r.naoEntendi || r.precisaMotivo || r.precisaTermo ? "" : r.foraDeEscopo ? " fora" : " falha"));
+    const c = el("article", "resp" + (r.ok ? "" : r.naoEntendi || r.precisaMotivo || r.precisaTermo ? "" : r.foraDeEscopo ? " fora" : " falha") + (r.precisaMotivo || r.precisaTermo ? " pendente" : "") + (r.interrompida ? " interrompida" : ""));
     if (!r.ok) {
       c.appendChild(el("p", "texto", r.mensagem || r.erro || "Algo deu errado."));
       if (r.precisaTermo) {
@@ -135,17 +137,20 @@
   let ocupado = false;
   async function enviar(texto, opc = {}) {
     texto = (texto || "").trim(); if (!texto || ocupado) return;
-    ocupado = true; $("btn-enviar").disabled = true; $("boas-vindas").hidden = true; window.SIRA_ADM.verConversa();
+    ocupado = true; $("boas-vindas").hidden = true; window.SIRA_ADM.verConversa();
+    const ac = new AbortController(), bt = $("btn-enviar"); bt.textContent = "Parar"; bt.classList.add("parar"); bt.type = "button"; bt.onclick = (e) => { e.preventDefault(); ac.abort(); }; // preventDefault: o botão volta a ser "submit" logo em seguida e não pode enviar o formulário vazio
+    if (opc.repetir) document.querySelectorAll("#conversa .resp.pendente, #conversa .resp.interrompida").forEach((x) => x.remove()); // o pedido de motivo/termo some: a consulta segue com o que foi informado
     if (!opc.repetir) bolhaUsuario(texto); $("pergunta").value = "";
-    const p = el("div", "pensando", "Consultando os dados"); $("conversa").appendChild(p); rolar();
-    const r = await api("/api/perguntar", { texto, conversa: conversaId, motivo: opc.motivo, senha: opc.senha });
-    p.remove();
-    if (r.status === 401) { mostrarLogin(); }
+    const p = el("div", "pensando", opc.repetir && opc.motivo ? "Gerando a lista… pode levar alguns instantes. Use Parar para cancelar." : "Consultando os dados"); $("conversa").appendChild(p); rolar();
+    const r = await api("/api/perguntar", { texto, conversa: conversaId, motivo: opc.motivo, senha: opc.senha }, undefined, ac.signal);
+    p.remove(); bt.textContent = "Perguntar"; bt.classList.remove("parar"); bt.type = "submit"; bt.onclick = null;
+    if (r.interrompida) { $("conversa").appendChild(cartaoResposta({ ok: false, interrompida: true, mensagem: "Consulta interrompida. Nada foi salvo no histórico." }, texto)); }
+    else if (r.status === 401) { mostrarLogin(); }
     else {
       $("conversa").appendChild(cartaoResposta(r.status === 200 ? r : { ok: false, mensagem: r.erro || "Não foi possível responder agora." }, texto));
       if (r.status === 200 && r.conversa) { conversaId = r.conversa.id; $("titulo-conversa").textContent = r.conversa.titulo; carregarHistorico(); }
     }
-    ocupado = false; $("btn-enviar").disabled = false; rolar(); $("pergunta").focus();
+    ocupado = false; rolar(); $("pergunta").focus();
   }
   $("form-pergunta").onsubmit = (e) => { e.preventDefault(); enviar($("pergunta").value); };
 
@@ -269,6 +274,38 @@
   async function iaCarregar() { const r = await api("/api/ia"); if (r.status === 200) iaEstado = r; return r; }
   function iaChamar(sub, corpo) { return api("/api/ia" + sub, corpo); }
 
+  // Caixa de modelo com busca: lista com rolagem própria (nunca passa da tela) e filtro enquanto digita.
+  function iaComboModelo(p) {
+    const wrap = el("div", "combo"), im = el("input"), lista = el("div", "combo-lista"); lista.hidden = true; lista.setAttribute("role", "listbox");
+    im.id = "ia-modelo"; im.value = p.modelo || ""; im.placeholder = p.modeloPadrao || "nome do modelo"; im.autocomplete = "off"; im.setAttribute("role", "combobox"); im.setAttribute("aria-expanded", "false");
+    const seta = el("button", "combo-seta", "▾"); seta.type = "button"; seta.tabIndex = -1; seta.setAttribute("aria-label", "Mostrar modelos"); seta.hidden = !iaModelos.length;
+    let ativo = -1;
+    const fechar = () => { lista.hidden = true; im.setAttribute("aria-expanded", "false"); ativo = -1; };
+    const marcar = () => { [...lista.children].forEach((c, i) => c.classList.toggle("ativo", i === ativo)); const c = lista.children[ativo]; if (c) c.scrollIntoView({ block: "nearest" }); };
+    const abrir = (filtrar) => {
+      if (!iaModelos.length) return;
+      const q = filtrar ? im.value.trim().toLowerCase() : "";
+      const itens = iaModelos.filter((m) => !q || m.toLowerCase().includes(q)).slice(0, 200);
+      lista.textContent = "";
+      itens.forEach((m) => { const o = el("div", "combo-op" + (m === im.value ? " sel" : ""), m); o.setAttribute("role", "option"); o.onmousedown = (e) => { e.preventDefault(); im.value = m; fechar(); }; lista.appendChild(o); });
+      if (!itens.length) lista.appendChild(el("div", "combo-vazio", "Nenhum modelo encontrado. Você pode digitar o nome."));
+      lista.hidden = false; im.setAttribute("aria-expanded", "true"); ativo = -1;
+      const r = im.getBoundingClientRect(), abaixo = innerHeight - r.bottom, acima = r.top; // sem espaço embaixo, abre para cima
+      const sobe = abaixo < 280 && acima > abaixo; lista.classList.toggle("sobe", sobe); lista.style.maxHeight = Math.max(140, Math.min(260, (sobe ? acima : abaixo) - 16)) + "px";
+    };
+    im.addEventListener("input", () => abrir(true));
+    im.addEventListener("focus", () => abrir(false));
+    im.addEventListener("blur", fechar);
+    im.addEventListener("keydown", (e) => {
+      const n = lista.hidden ? 0 : lista.querySelectorAll(".combo-op").length;
+      if (e.key === "ArrowDown") { e.preventDefault(); if (lista.hidden) abrir(false); else if (n) { ativo = (ativo + 1) % n; marcar(); } }
+      else if (e.key === "ArrowUp" && n) { e.preventDefault(); ativo = (ativo - 1 + n) % n; marcar(); }
+      else if (e.key === "Enter" && ativo >= 0 && n) { e.preventDefault(); im.value = lista.children[ativo].textContent; fechar(); }
+      else if (e.key === "Escape") fechar();
+    });
+    seta.onmousedown = (e) => { e.preventDefault(); if (lista.hidden) { im.focus(); abrir(false); } else fechar(); };
+    wrap.append(im, seta, lista); return wrap;
+  }
   function iaDesenhar() {
     const box = $("ia-corpo"); box.textContent = ""; const e = iaEstado; const ativo = e.ativo && e.provedores[e.ativo];
     const st = el("div", "ia-status" + (ativo || e.ativoPorAmbiente ? " on" : ""));
@@ -293,8 +330,7 @@
     const p = e.provedores[iaSel], f = el("div", "ia-form");
     f.appendChild(el("h3", "", p.nome));
     const l1 = el("div", "ia-linha");
-    const dm = el("div"); dm.appendChild(el("label", "", "Modelo")); const im = el("input"); im.id = "ia-modelo"; im.value = p.modelo || ""; im.placeholder = p.modeloPadrao || "nome do modelo"; im.setAttribute("list", "ia-modelos"); im.autocomplete = "off"; dm.appendChild(im);
-    const dl = el("datalist"); dl.id = "ia-modelos"; iaModelos.forEach((m) => { const o = el("option"); o.value = m; dl.appendChild(o); }); dm.appendChild(dl);
+    const dm = el("div"); dm.appendChild(el("label", "", "Modelo")); dm.appendChild(iaComboModelo(p));
     l1.appendChild(dm);
     const bm = el("button", "btn sec", "Buscar modelos"); bm.type = "button"; bm.onclick = iaBuscarModelos; l1.appendChild(bm); f.appendChild(l1);
     if (p.baseEditavel) { const d = el("div"); d.appendChild(el("label", "", p.obrigaBase ? "URL base (obrigatória)" : "URL base")); const ib = el("input"); ib.id = "ia-base"; ib.value = p.baseUrl || ""; ib.placeholder = p.baseUrlPadrao || "https://servidor/v1"; ib.autocomplete = "off"; d.appendChild(ib); f.appendChild(d); }

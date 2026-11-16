@@ -48,6 +48,8 @@ function auditar(slug, obj) {
 }
 
 // ---------- fluxo da pergunta ----------
+// Quanto o servidor espera o banco (SIRA_CONSULTA_S, padrão 120 s) + folga; o conector usa o mesmo valor como teto no banco.
+const ESPERA_MS = (Math.min(240, Math.max(10, Number(process.env.SIRA_CONSULTA_S) || 120)) + 10) * 1000;
 const fmtN = (n) => new Intl.NumberFormat("pt-BR").format(n);
 const MSG_LISTA_OFF = "Esta pergunta pede uma lista com nomes de pessoas, e a leitura de nomes não está liberada neste banco. Peça à TI para gerar o script de permissões com a opção \"Listas com nomes\" (com autorização do encarregado de dados da prefeitura).";
 async function entidadesDe(c, slug) { if (!c.entidades) c.entidades = (await hub.chamar(slug, { tipo: "entidades" })).entidades; return c.entidades; }
@@ -72,7 +74,7 @@ async function perguntar(usuario, textoBruto, extra = {}) {
   if (decisao.tipo !== "ok") {
     // Fora do catálogo: a IA tenta montar uma consulta segura; se a pergunta não for sobre o e-SUS, o SIRA recusa.
     let ent; try { ent = await entidadesDe(c, slug); } catch { return { status: 502, corpo: { ok: false, erro: "Não consegui falar com o conector." } }; }
-    const lv = await livre.responder({ tenant: slug, texto: textoBruto, ent, chamar: (m) => hub.chamar(slug, m) });
+    const lv = await livre.responder({ tenant: slug, texto: textoBruto, ent, chamar: (m) => hub.chamar(slug, m, ESPERA_MS, extra.sinal) });
     const log = (resultado, x = {}) => auditar(slug, { usuario: usuario.login, pergunta_texto: textoBruto, resultado, ...x });
     if (lv.tipo === "fora") { log("fora_de_escopo"); return { status: 200, corpo: { ok: false, foraDeEscopo: true, mensagem: livre.RECUSA } }; }
     if (lv.tipo === "lista_nominal") {
@@ -119,11 +121,11 @@ async function perguntar(usuario, textoBruto, extra = {}) {
   ex = await llm.refinar(textoBruto, q, c.entidades, ex);
 
   let r;
-  try { r = await hub.chamar(slug, { tipo: "executar", pergunta: q.id, params: ex.params }, q.sensivel ? 100000 : 20000); }
+  try { r = await hub.chamar(slug, { tipo: "executar", pergunta: q.id, params: ex.params }, q.sensivel ? Math.round(ESPERA_MS * 1.5) : ESPERA_MS, extra.sinal); }
   catch (e) { return { status: e.offline ? 503 : 504, corpo: { ok: false, erro: e.offline ? "O conector da prefeitura está offline." : "A consulta demorou demais." } }; }
   if (!r.ok) {
     auditar(slug, { usuario: usuario.login, pergunta_texto: textoBruto, pergunta: q.id, params: ex.params, resultado: "erro", erro: r.erro });
-    return { status: 200, corpo: { ok: false, mensagem: "Não foi possível executar a consulta: " + r.erro } };
+    return { status: 200, corpo: { ok: false, mensagem: /^A consulta passou de/.test(r.erro || "") ? r.erro : "Não foi possível executar a consulta: " + r.erro } };
   }
   if (r.entidades) c.entidades = r.entidades;
   const params = r.params, premissas = montarPremissas(q, params, ex.origem, ex.rotulos || {}, c.entidades);
@@ -159,14 +161,14 @@ async function dadosDosPaineis(usuario) {
     try {
       if (i.fonte.tipo === "livre") {
         if (!livre.seloOk(slug, i.fonte.sql, i.fonte.selo)) return { ...base, erro: "Consulta com selo inválido (o segredo do servidor mudou?). Fixe de novo." };
-        const r = await hub.chamar(slug, { tipo: "livre", sql: i.fonte.sql }); if (!r.ok) return { ...base, erro: r.erro };
+        const r = await hub.chamar(slug, { tipo: "livre", sql: i.fonte.sql }, ESPERA_MS); if (!r.ok) return { ...base, erro: r.erro };
         const { tabela: tab, grafico } = livre.montarTabela(r.livre, { grafico: i.grafico.tipo, x: i.grafico.x, y: i.grafico.y });
         const unico = r.livre.linhas.length === 1 && r.livre.colunas.length === 1;
         return { ...base, valorUnico: unico ? (r.livre.linhas[0].__suprimido ? "menos de 5" : fmtN(r.livre.linhas[0].total)) : null, tabela: unico ? null : tab, grafico: grafico ? { ...i.grafico, ix: grafico.ix, iy: grafico.iy } : { tipo: "nenhum" }, em: Date.now() };
       }
       const q = c.manifesto.find((x) => x.id === i.fonte.pergunta && !x.sensivel); if (!q) return { ...base, erro: "Esta consulta não está mais disponível." };
       const ent = await entidadesDe(c, slug);
-      const r = await hub.chamar(slug, { tipo: "executar", pergunta: q.id, params: i.fonte.params }); if (!r.ok) return { ...base, erro: r.erro };
+      const r = await hub.chamar(slug, { tipo: "executar", pergunta: q.id, params: i.fonte.params }, ESPERA_MS); if (!r.ok) return { ...base, erro: r.erro };
       if (r.resultado.tipo === "valor") return { ...base, valorUnico: r.resultado.suprimido ? "menos de 5" : fmtN(r.resultado.total), texto: montar(q, r.params, r.resultado, ent), em: Date.now() };
       const tab = tabela(q, r.resultado); tab.dados = dadosGrafico(tab, r.resultado.linhas, q);
       const g = graficoCatalogo(q, { colunas: q.colunas, linhas: tab.linhas });
@@ -315,7 +317,9 @@ const server = http.createServer(async (req, res) => {
         if (!limite("q:" + usuario.login, auth.configDe(usuario.tenant).limite_perguntas_min, 60e3)) return json(res, 429, { erro: "Muitas perguntas seguidas. Aguarde um instante." });
         const b = await corpo(req); const t = String(b.texto || "").trim();
         if (t.length < 3 || t.length > 300) return json(res, 400, { erro: "Escreva uma pergunta entre 3 e 300 caracteres." });
-        const r = await perguntar(usuario, t, { motivo: b.motivo, senha: b.senha });
+        const ac = new AbortController(); res.on("close", () => { if (!res.writableEnded) ac.abort(); }); // o botão Parar fecha a conexão
+        const r = await perguntar(usuario, t, { motivo: b.motivo, senha: b.senha, sinal: ac.signal });
+        if (ac.signal.aborted) return;
         if (r.status === 200 && !r.corpo.precisaMotivo && !r.corpo.precisaTermo) { try { const c = historico.adicionar(usuario, b.conversa, t, r.corpo); r.corpo = { ...r.corpo, conversa: { id: c.id, titulo: c.titulo } }; } catch (e) { console.error("[historico]", e.message); } }
         return json(res, r.status, r.corpo);
       }

@@ -104,6 +104,8 @@ async function responder({ tenant, texto, ent, chamar }) {
       return { tipo: "ok", titulo: String(plano.titulo || "Resultado").slice(0, 120), criterio: String(plano.criterio || "").slice(0, 500), tabela, grafico, sql: r.livre.sqlExecutado, suprimidas: r.livre.suprimidas, truncado: r.livre.truncado, maximo: r.livre.maximo,
         valorUnico: unico ? (r.livre.linhas[0].__suprimido ? "menos de 5" : fmt(total1)) : null, selo: selo(tenant, r.livre.sqlExecutado), grafPlano: { tipo: plano.grafico, x: plano.x, y: plano.y }, ia: cfg.provedor };
     }
+    // consulta lenta no banco não é erro de SQL: repetir só gastaria outra chamada de IA e mais 30 s; mostra o motivo real
+    if (/passou de \d+ s no banco|demorou demais|foi interrompida/i.test(r.erro || "")) return { tipo: "erro", erro: r.erro };
     falha = { sql: plano.sql, erro: r.erro };
   }
   return { tipo: "falha", erro: falha?.erro, sql: falha?.sql };

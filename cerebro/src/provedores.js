@@ -6,6 +6,7 @@ const PROVEDORES = {
   openai:     { nome: "ChatGPT (OpenAI)",               modeloPadrao: "gpt-4o-mini",       chave: true,  baseEditavel: false, baseUrl: "https://api.openai.com/v1",                  externo: true,  timeoutMs: 30000 },
   gemini:     { nome: "Gemini (Google)",                modeloPadrao: "gemini-2.5-flash",  chave: true,  baseEditavel: false, baseUrl: "https://generativelanguage.googleapis.com",  externo: true,  timeoutMs: 30000 },
   openrouter: { nome: "OpenRouter (vários modelos, uma chave)", modeloPadrao: "openai/gpt-4o-mini", chave: true, baseEditavel: false, baseUrl: "https://openrouter.ai/api/v1", externo: true, timeoutMs: 45000 },
+  manus:      { nome: "Manus (agente; mais lento)",       modeloPadrao: "standard",          chave: true,  baseEditavel: false, baseUrl: "https://api.manus.ai",                       externo: true,  timeoutMs: 120000, perfis: ["standard", "lite", "max"] },
   compativel: { nome: "Outro compatível com OpenAI (Groq, OpenRouter, DeepSeek, LM Studio…)", modeloPadrao: "", chave: false, baseEditavel: true, baseUrl: "", obrigaBase: true, externo: true, timeoutMs: 45000 },
 };
 
@@ -79,6 +80,26 @@ const adaptadores = {
     return jsonSeguro(r.message?.content);
   },
 };
+// Manus é um agente: cada pedido vira uma "tarefa" assíncrona (criar e consultar até terminar), por isso é mais lento que os demais.
+adaptadores.manus = async ({ modelo, chave, base, prompt, ms, sistema }) => {
+  const h = { "x-manus-api-key": chave }, limite = Date.now() + ms;
+  const texto = `${sistema || SISTEMA}\n\n${prompt}\n\nResponda diretamente, sem usar ferramentas, sem navegar e sem criar arquivos. A resposta deve ser SOMENTE o objeto JSON pedido.`;
+  const c = await http(`${base}/v2/task.create`, { headers: h, ms: Math.min(30000, ms), chave, corpo: { message: { content: texto }, agent_profile: modelo || "standard", hide_in_task_list: true, title: "SIRA" } });
+  if (c.ok === false || !c.task_id) throw new Error(`Manus: ${limpar(c.error?.message || "não criou a tarefa", chave)}`);
+  const lerTexto = (m) => { const x = m.assistant_message?.content; return typeof x === "string" ? x : Array.isArray(x) ? x.map((p) => p.text || "").join("") : ""; };
+  await new Promise((r) => setTimeout(r, 2500));
+  while (Date.now() < limite) {
+    const r = await http(`${base}/v2/task.listMessages?task_id=${encodeURIComponent(c.task_id)}&order=asc&limit=200`, { metodo: "GET", headers: h, ms: Math.min(20000, Math.max(3000, limite - Date.now())), chave });
+    const msgs = r.messages || [];
+    const erro = msgs.find((m) => m.type === "error_message"); if (erro) throw new Error(`Manus: ${limpar(erro.error_message?.content || erro.error_message?.message || "erro na tarefa", chave)}`);
+    const status = [...msgs].reverse().find((m) => m.type === "status_update")?.status_update?.agent_status;
+    if (status === "error") throw new Error("Manus: a tarefa terminou com erro");
+    if (status === "waiting") throw new Error("Manus: o agente pediu informação adicional; use o perfil standard ou lite");
+    if (status === "stopped") { const t = [...msgs].reverse().map(lerTexto).find((x) => x.trim()); if (!t) throw new Error("Manus: a tarefa terminou sem resposta"); return jsonSeguro(t); }
+    await new Promise((res) => setTimeout(res, 2000));
+  }
+  throw new Error(`Tempo esgotado (${Math.round(ms / 1000)} s). O Manus é um agente e pode demorar mais que os outros provedores.`);
+};
 adaptadores.compativel = adaptadores.openai;
 // OpenRouter fala o protocolo da OpenAI; os cabeçalhos abaixo só identificam o aplicativo no painel deles.
 adaptadores.openrouter = (a) => adaptadores.openai({ ...a, extra: { "HTTP-Referer": "https://bemosistemas.com.br", "X-Title": "SIRA - BeMo Sistemas" } });
@@ -93,6 +114,7 @@ async function extrairJSON({ provedor, modelo, chave, baseUrl, prompt, timeoutMs
 async function listarModelos({ provedor, chave, baseUrl }) {
   const p = PROVEDORES[provedor]; if (!p) throw new Error("Provedor desconhecido");
   if (p.chave && !chave) throw new Error("Cadastre a chave de API primeiro.");
+  if (p.perfis) return p.perfis.slice(); // Manus não lista modelos: usa perfis fixos (standard, lite, max)
   const base = baseDe(provedor, { baseUrl }); const ms = 20000; let ids = [];
   if (provedor === "anthropic") ids = ((await http(`${base}/v1/models?limit=100`, { metodo: "GET", headers: { "x-api-key": chave, "anthropic-version": "2023-06-01" }, ms, chave })).data || []).map((m) => m.id);
   else if (provedor === "gemini") ids = ((await http(`${base}/v1beta/models?pageSize=100`, { metodo: "GET", headers: { "x-goog-api-key": chave }, ms, chave })).models || []).filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes("generateContent")).map((m) => String(m.name).replace(/^models\//, ""));

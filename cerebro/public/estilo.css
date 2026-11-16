@@ -257,3 +257,16 @@ pre.sql{margin:6px 0;padding:10px 12px;background:var(--fundo);border:1px solid 
 .swal2-popup .swal2-checkbox{display:flex;justify-content:flex-start;align-items:center;gap:10px;margin:18px auto 4px;padding:0;background:none;width:100%}
 .swal2-popup .swal2-checkbox input{margin:0;width:18px;height:18px;flex:none}
 .swal2-popup .swal2-checkbox .swal2-label{margin:0;font-size:15px;font-weight:600;letter-spacing:0;text-transform:none;color:#0F172A;white-space:normal}
+
+/* caixa de modelo da IA: lista própria com rolagem, dentro da tela */
+.combo{position:relative}
+.combo input{padding-right:40px}
+.combo-seta{position:absolute;right:6px;top:6px;width:30px;height:30px;border:none;background:none;color:var(--azul);font-size:16px;cursor:pointer;border-radius:8px}
+.combo-seta:hover{background:var(--fundo)}
+.combo-lista{position:absolute;left:0;right:0;top:100%;margin-top:4px;max-height:260px;overflow-y:auto;background:#fff;border:1.5px solid var(--borda);border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.18);z-index:30;padding:4px}
+.combo-op{padding:9px 10px;border-radius:7px;font-size:14px;cursor:pointer;color:var(--tinta);overflow-wrap:anywhere}
+.combo-op:hover,.combo-op.ativo{background:var(--fundo)}
+.combo-op.sel{font-weight:700;color:var(--azul)}
+.combo-vazio{padding:10px;font-size:13px;color:var(--suave,#64748B)}
+.combo-lista.sobe{top:auto;bottom:100%;margin-top:0;margin-bottom:4px}
+.btn.parar{background:#fff;color:#B91C1C;border:1.5px solid #FCA5A5}.btn.parar:hover{background:#FEF2F2}

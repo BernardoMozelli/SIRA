@@ -10,7 +10,8 @@ const { manifesto } = require("../../conector/src/catalogo");
 
 let n = 0; const t = (nome, c) => { assert.ok(c, nome); n++; console.log("ok -", nome); };
 const recebidos = [];
-const CH = { anthropic: "sk-ant-teste-1234567890", openai: "sk-oa-teste-1234567890", gemini: "AIza-teste-1234567890" };
+const CH = { anthropic: "sk-ant-teste-1234567890", openai: "sk-oa-teste-1234567890", gemini: "AIza-teste-1234567890", manus: "manus-teste-1234567890" };
+let manusPolls = 0;
 
 const fake = http.createServer((req, res) => {
   let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => {
@@ -38,6 +39,15 @@ const fake = http.createServer((req, res) => {
     if (req.url.startsWith("/v1beta/models")) return ok({ models: [{ name: "models/gemini-teste", supportedGenerationMethods: ["generateContent"] }, { name: "models/embed-1", supportedGenerationMethods: ["embedContent"] }] });
     if (req.url === "/api/chat") return ok({ message: { content: '{"ok": true, "mensagem": "ollama ok"}' } });
     if (req.url === "/api/tags") return ok({ models: [{ name: "qwen2.5:3b" }] });
+    if (req.url.startsWith("/manus/v2/task.create")) {
+      if (req.headers["x-manus-api-key"] !== CH.manus) { res.statusCode = 401; return ok({ ok: false, error: { message: "invalid api key " + req.headers["x-manus-api-key"] } }); }
+      manusPolls = 0; return ok({ ok: true, task_id: "T1", task_url: "x" });
+    }
+    if (req.url.startsWith("/manus/v2/task.listMessages")) {
+      manusPolls++; const m = [{ type: "user_message" }, { type: "status_update", status_update: { agent_status: manusPolls < 2 ? "running" : "stopped" } }];
+      if (manusPolls >= 2) m.push({ type: "assistant_message", assistant_message: { content: '```json\n{"ok": true, "mensagem": "SIRA conectado"}\n```' } });
+      return ok({ ok: true, messages: m });
+    }
     if (req.url.startsWith("/lento")) return setTimeout(() => ok({}), 3000);
     res.statusCode = 404; res.end("{}");
   });
@@ -45,7 +55,7 @@ const fake = http.createServer((req, res) => {
 
 (async () => {
   await new Promise((r) => fake.listen(0, "127.0.0.1", r)); const P = fake.address().port, B = `http://127.0.0.1:${P}`;
-  process.env.SIRA_BASE_ANTHROPIC = B; process.env.SIRA_BASE_OPENAI = B + "/oa"; process.env.SIRA_BASE_GEMINI = B;
+  process.env.SIRA_BASE_ANTHROPIC = B; process.env.SIRA_BASE_OPENAI = B + "/oa"; process.env.SIRA_BASE_GEMINI = B; process.env.SIRA_BASE_MANUS = B + "/manus";
   const ultimo = () => recebidos[recebidos.length - 1];
 
   // ---- adaptadores ----
@@ -128,11 +138,18 @@ const fake = http.createServer((req, res) => {
   const chama = async (ck, caminho, corpo) => { const x = await fetch(S + caminho, corpo === undefined ? { headers: { cookie: ck } } : { method: "POST", headers: { cookie: ck, "content-type": "application/json" }, body: JSON.stringify(corpo) }); return { st: x.status, j: await x.json() }; };
   t("gestor e admin da prefeitura NÃO acessam a configuração de IA (403)", (await chama(cg, "/api/ia")).st === 403 && (await chama(ca, "/api/ia")).st === 403 && (await chama(ca, "/api/ia/salvar", { provedor: "openai", chave: "xxxxxxxxxx" })).st === 403);
   t("sem login: 401", (await fetch(S + "/api/ia")).status === 401);
-  let o = await chama(cs, "/api/ia"); t("super vê a configuração; 6 provedores prontos", o.st === 200 && Object.keys(o.j.provedores).join() === "ollama,anthropic,openai,gemini,openrouter,compativel");
+  let o = await chama(cs, "/api/ia"); t("super vê a configuração; 7 provedores prontos", o.st === 200 && Object.keys(o.j.provedores).join() === "ollama,anthropic,openai,gemini,openrouter,manus,compativel");
   o = await chama(cs, "/api/ia/salvar", { provedor: "gemini", modelo: "gemini-teste", chave: CH.gemini, ativar: true });
   t("salvar+ativar Gemini; resposta não traz a chave", o.st === 200 && o.j.ativo === "gemini" && !JSON.stringify(o.j).includes(CH.gemini) && o.j.provedores.gemini.chaveFim === "7890");
   o = await chama(cs, "/api/ia/testar", { provedor: "gemini" }); t("botão Testar conexão (Gemini) ok", o.j.ok === true && o.j.modelo === "gemini-teste");
   o = await chama(cs, "/api/ia/modelos", { provedor: "gemini" }); t("botão Buscar modelos (Gemini)", o.j.modelos.join() === "gemini-teste");
+  o = await chama(cs, "/api/ia/salvar", { provedor: "manus", chave: CH.manus }); o = await chama(cs, "/api/ia/testar", { provedor: "manus" });
+  t("Manus: testar conexão (cria a tarefa, consulta até terminar, lê o JSON)", o.j.ok === true && o.j.modelo === "standard");
+  const cm = recebidos.find((x) => x.u.startsWith("/manus/v2/task.create"));
+  t("Manus: tarefa oculta, perfil standard, instrução de só JSON", cm.b.hide_in_task_list === true && cm.b.agent_profile === "standard" && /SOMENTE o objeto JSON/.test(cm.b.message.content));
+  o = await chama(cs, "/api/ia/modelos", { provedor: "manus" }); t("Manus: perfis standard, lite e max", o.j.modelos.join() === "standard,lite,max");
+  o = await chama(cs, "/api/ia/salvar", { provedor: "manus", chave: "manus-ERRADA-1234567" }); o = await chama(cs, "/api/ia/testar", { provedor: "manus" });
+  t("Manus: chave errada mostra o erro, com a chave mascarada", o.j.ok === false && /401/.test(o.j.erro) && !o.j.erro.includes("ERRADA-1234567")); await chama(cs, "/api/ia/salvar", { provedor: "manus", chave: CH.manus });
   o = await chama(cs, "/api/ia/salvar", { provedor: "openai", chave: "sk-oa-ERRADA-1234567" }); o = await chama(cs, "/api/ia/testar", { provedor: "openai", modelo: "gpt-x" });
   t("teste com chave errada mostra o erro do provedor, com a chave mascarada", o.j.ok === false && /401/.test(o.j.erro) && !JSON.stringify(o.j).includes("ERRADA-1234567") && /\*\*\*/.test(o.j.erro));
   await chama(cs, "/api/ia/salvar", { provedor: "compativel", modelo: "m" }); o = await chama(cs, "/api/ia/ativar", { provedor: "compativel" }); t("ativar 'compatível' sem URL base é recusado", o.j.ok === false && /URL base/.test(o.j.erro));

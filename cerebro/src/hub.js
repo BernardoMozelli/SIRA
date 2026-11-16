@@ -53,15 +53,20 @@ function removerDireto(slug) { const c = conectores.get(slug); if (c && c.direto
 async function chamarDireto(c, msg) {
   try {
     if (msg.tipo === "entidades") return { ok: true, entidades: await c.direto.listarEntidades() };
-    if (msg.tipo === "executar") { const r = await c.direto.executar(msg.pergunta, msg.params); return { ok: true, params: r.params, resultado: r.resultado, entidades: r.entidades, cacheSegundos: r.cacheSegundos ?? null }; }
-    if (msg.tipo === "livre") { if (!c.direto.executarLivre) return { ok: false, erro: "Perguntas livres exigem o SIRA em modo direto." }; return { ok: true, livre: await c.direto.executarLivre(msg.sql) }; }
+    if (msg.tipo === "executar") { const r = await c.direto.executar(msg.pergunta, msg.params, msg.cid); return { ok: true, params: r.params, resultado: r.resultado, entidades: r.entidades, cacheSegundos: r.cacheSegundos ?? null }; }
+    if (msg.tipo === "livre") { if (!c.direto.executarLivre) return { ok: false, erro: "Perguntas livres exigem o SIRA em modo direto." }; return { ok: true, livre: await c.direto.executarLivre(msg.sql, msg.cid) }; }
     return { ok: false, erro: "tipo de mensagem desconhecido" };
   } catch (e) { return { ok: false, erro: e.message }; }
 }
 
-function chamar(slug, msg, ms = 20000) {
+function chamar(slug, msg, ms = 20000, sinal) {
   const c = conectores.get(slug);
-  if (c && c.direto) return Promise.race([chamarDireto(c, msg), new Promise((_, no) => setTimeout(() => no(new Error("tempo esgotado no conector")), ms).unref())]);
+  if (sinal && sinal.aborted) return Promise.reject(Object.assign(new Error("cancelado"), { cancelado: true }));
+  if (c && c.direto) {
+    const cid = crypto.randomUUID(); msg = { ...msg, cid };
+    const parar = new Promise((_, no) => { if (sinal) sinal.addEventListener("abort", () => { try { c.direto.cancelar(cid); } catch {} no(Object.assign(new Error("cancelado"), { cancelado: true })); }, { once: true }); });
+    return Promise.race([chamarDireto(c, msg), parar, new Promise((_, no) => setTimeout(() => no(new Error("tempo esgotado no conector")), ms).unref())]);
+  }
   if (!c || c.ws.readyState !== 1) return Promise.reject(Object.assign(new Error("conector offline"), { offline: true }));
   const id = crypto.randomUUID();
   return new Promise((resolve, reject) => {
